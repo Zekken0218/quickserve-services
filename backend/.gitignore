@@ -1,0 +1,7 @@
+# Python env
+.venv/
+__pycache__/
+
+# Credentials (do not commit service account keys)
+core/firebase/*.json
+*.env

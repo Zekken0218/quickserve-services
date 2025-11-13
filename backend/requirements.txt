@@ -1,0 +1,5 @@
+Django==5.2.8
+django-cors-headers==4.0.0
+djangorestframework==3.16.1
+djangorestframework-simplejwt==5.3.1
+firebase-admin==6.1.0
