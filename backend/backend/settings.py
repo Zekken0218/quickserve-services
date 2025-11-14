@@ -41,6 +41,15 @@ _CORS_DEFAULTS = [
 ]
 CORS_ALLOWED_ORIGINS = _CORS_LIST or _CORS_DEFAULTS
 
+# Optional: Allow all origins (useful for initial debugging; disable for production hardening)
+CORS_ALLOW_ALL_ORIGINS = os.environ.get("CORS_ALLOW_ALL_ORIGINS", "False") == "True"
+
+# Optional: Regex-based CORS origins (helps cover dynamic preview domains)
+# Example env value: ^https://quickserve-services.*\.vercel\.app$
+_CORS_REGEX_ENV = os.environ.get("CORS_ALLOWED_ORIGIN_REGEXES", "")
+if _CORS_REGEX_ENV:
+    CORS_ALLOWED_ORIGIN_REGEXES = [s.strip() for s in _CORS_REGEX_ENV.split(",") if s.strip()]
+
 # When running locally you may want to allow credentials (cookies/auth)
 CORS_ALLOW_CREDENTIALS = True
 
