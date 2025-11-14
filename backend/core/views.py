@@ -43,6 +43,33 @@ def status(request):
 		"status": "ok",
 		"message": "Hello from Django backend",
 	})
+ 
+
+def _is_request_admin(request) -> bool:
+	"""Determine admin privileges via either Firebase role or Django staff/superuser.
+	Allows local dev/admin via Django while still supporting Firestore-stored roles.
+	"""
+	try:
+		if not request.user or not request.user.is_authenticated:
+			return False
+		# Django admin fallback
+		if getattr(request.user, "is_superuser", False) or getattr(request.user, "is_staff", False):
+			return True
+		# Bootstrap: allow admin via UID list in settings (comma-separated ADMIN_BOOTSTRAP_UIDS)
+		uid = getattr(request.user, "firebase_uid", None)
+		if uid:
+			try:
+				bootstrap = (getattr(settings, "ADMIN_BOOTSTRAP_UIDS", "") or "").split(",")
+				bootstrap = [s.strip() for s in bootstrap if s.strip()]
+			except Exception:
+				bootstrap = []
+			if uid in bootstrap:
+				return True
+		# Firebase role check
+		role = get_user_role(uid) if uid else None
+		return bool(role and role.get("role") == "admin")
+	except Exception:
+		return False
 
 
 @api_view(["POST"])
@@ -69,9 +96,7 @@ def services_list(request):
 	if not request.user or not request.user.is_authenticated:
 		return Response({"detail": "Authentication required"}, status=drf_status.HTTP_401_UNAUTHORIZED)
 	# admin check
-	uid = getattr(request.user, "firebase_uid", None)
-	role = get_user_role(uid) if uid else None
-	if not role or role.get("role") != "admin":
+	if not _is_request_admin(request):
 		return Response({"detail": "Admin privileges required"}, status=drf_status.HTTP_403_FORBIDDEN)
 
 	payload = request.data or {}
@@ -104,9 +129,7 @@ def service_detail(request, service_id: str):
 	# PUT/DELETE require admin
 	if not request.user or not request.user.is_authenticated:
 		return Response({"detail": "Authentication required"}, status=drf_status.HTTP_401_UNAUTHORIZED)
-	uid = getattr(request.user, "firebase_uid", None)
-	role = get_user_role(uid) if uid else None
-	if not role or role.get("role") != "admin":
+	if not _is_request_admin(request):
 		return Response({"detail": "Admin privileges required"}, status=drf_status.HTTP_403_FORBIDDEN)
 
 	if request.method == "PUT":
@@ -175,8 +198,8 @@ def booking_detail(request, booking_id: str):
 	if not b:
 		return Response({"detail": "Not found"}, status=drf_status.HTTP_404_NOT_FOUND)
 
-	role = get_user_role(uid) if uid else None
-	is_admin = role and role.get("role") == "admin"
+	# Use unified admin detection (supports Django staff/superuser)
+	is_admin = _is_request_admin(request)
 
 	payload = request.data or {}
 	allowed_user_fields = {"booking_date", "booking_time", "address"}
@@ -210,9 +233,7 @@ def booking_detail(request, booking_id: str):
 def admin_bookings(request):
 	if not request.user or not request.user.is_authenticated:
 		return Response({"detail": "Authentication required"}, status=drf_status.HTTP_401_UNAUTHORIZED)
-	uid = getattr(request.user, "firebase_uid", None)
-	role = get_user_role(uid) if uid else None
-	if not role or role.get("role") != "admin":
+	if not _is_request_admin(request):
 		return Response({"detail": "Admin privileges required"}, status=drf_status.HTTP_403_FORBIDDEN)
 	data = list_all_bookings()
 	return Response(data)
@@ -257,9 +278,7 @@ def me_stats(request):
 def admin_users(request):
 	if not request.user or not request.user.is_authenticated:
 		return Response({"detail": "Authentication required"}, status=drf_status.HTTP_401_UNAUTHORIZED)
-	uid = getattr(request.user, "firebase_uid", None)
-	role = get_user_role(uid) if uid else None
-	if not role or role.get("role") != "admin":
+	if not _is_request_admin(request):
 		return Response({"detail": "Admin privileges required"}, status=drf_status.HTTP_403_FORBIDDEN)
 
 	# Fetch auth users and merge with profile and role info so all accounts appear
@@ -310,9 +329,7 @@ def admin_users(request):
 def admin_set_user_role(request, user_id: str):
 	if not request.user or not request.user.is_authenticated:
 		return Response({"detail": "Authentication required"}, status=drf_status.HTTP_401_UNAUTHORIZED)
-	uid = getattr(request.user, "firebase_uid", None)
-	role = get_user_role(uid) if uid else None
-	if not role or role.get("role") != "admin":
+	if not _is_request_admin(request):
 		return Response({"detail": "Admin privileges required"}, status=drf_status.HTTP_403_FORBIDDEN)
 
 	payload = request.data or {}
@@ -335,9 +352,7 @@ def categories(request):
 	# POST admin only
 	if not request.user or not request.user.is_authenticated:
 		return Response({"detail": "Authentication required"}, status=drf_status.HTTP_401_UNAUTHORIZED)
-	uid = getattr(request.user, "firebase_uid", None)
-	role = get_user_role(uid) if uid else None
-	if not role or role.get("role") != "admin":
+	if not _is_request_admin(request):
 		return Response({"detail": "Admin privileges required"}, status=drf_status.HTTP_403_FORBIDDEN)
 
 	name = (request.data or {}).get("name")
@@ -353,9 +368,7 @@ def upload_service_image(request):
 	"""Accepts multipart/form-data with field 'file'. Admin only. Stores the image in MEDIA_ROOT/services and returns {url}."""
 	if not request.user or not request.user.is_authenticated:
 		return Response({"detail": "Authentication required"}, status=drf_status.HTTP_401_UNAUTHORIZED)
-	uid = getattr(request.user, "firebase_uid", None)
-	role = get_user_role(uid) if uid else None
-	if not role or role.get("role") != "admin":
+	if not _is_request_admin(request):
 		return Response({"detail": "Admin privileges required"}, status=drf_status.HTTP_403_FORBIDDEN)
 
 	file = request.FILES.get("file")
@@ -369,5 +382,13 @@ def upload_service_image(request):
 	rel_path = os.path.join("services", filename)
 	saved_path = default_storage.save(rel_path, file)
 
-	url = request.build_absolute_uri(os.path.join(settings.MEDIA_URL, saved_path).replace("\\", "/"))
+	# Generate a public URL. For Cloudinary storage, default_storage.url returns a full https URL.
+	# For local FileSystemStorage, fall back to building an absolute URL from MEDIA_URL.
+	try:
+		url = default_storage.url(saved_path)
+		if not isinstance(url, str) or not url.startswith("http"):
+			raise ValueError("Non-absolute URL from storage backend")
+	except Exception:
+		url = request.build_absolute_uri(os.path.join(settings.MEDIA_URL, saved_path).replace("\\", "/"))
+
 	return Response({"url": url})

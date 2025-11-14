@@ -22,6 +22,17 @@ def init_firebase_app():
     if firebase_admin._apps:
         return firebase_admin.get_app()
 
+    # Option 0: if running inside Django, try settings.FIREBASE_CONFIG first
+    try:
+        from django.conf import settings  # type: ignore
+        cfg = getattr(settings, "FIREBASE_CONFIG", None)
+        if isinstance(cfg, dict) and cfg.get("private_key"):
+            cred = credentials.Certificate(cfg)
+            return initialize_app(cred)
+    except Exception:
+        # Ignore if Django isn't configured or FIREBASE_CONFIG missing
+        pass
+
     # Option 1: use standard GOOGLE_APPLICATION_CREDENTIALS
     cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     if cred_path and os.path.exists(cred_path):

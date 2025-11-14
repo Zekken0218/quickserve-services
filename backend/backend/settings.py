@@ -30,12 +30,16 @@ DEBUG = True
 ALLOWED_HOSTS = ['*']
 
 # Allow the frontend dev server (Vite) to access the API during development
-CORS_ALLOWED_ORIGINS = [
+# CORS allowed origins (support env override, plus common local dev defaults)
+_CORS_FROM_ENV = os.environ.get("CORS_ALLOWED_ORIGINS", "")
+_CORS_LIST = [s.strip() for s in _CORS_FROM_ENV.split(",") if s.strip()]
+_CORS_DEFAULTS = [
     "http://localhost:8080",
     "http://127.0.0.1:8080",
     "http://localhost:8081",
     "http://127.0.0.1:8081",
 ]
+CORS_ALLOWED_ORIGINS = _CORS_LIST or _CORS_DEFAULTS
 
 # When running locally you may want to allow credentials (cookies/auth)
 CORS_ALLOW_CREDENTIALS = True
@@ -230,3 +234,7 @@ FIREBASE_CONFIG = _load_service_account()
 _pk = (FIREBASE_CONFIG or {}).get("private_key", "")
 if not _pk.startswith("-----BEGIN PRIVATE KEY-----"):
     FIREBASE_CONFIG = {}
+
+# Optional: bootstrap admin privileges by UID (comma-separated list of Firebase UIDs)
+# Useful for local development or first-admin promotion when Firestore roles aren't yet set.
+ADMIN_BOOTSTRAP_UIDS = os.environ.get("ADMIN_BOOTSTRAP_UIDS", "")
